@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>GPX Area</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
+
+        #map {
+            height: 100vh;
+            width: 100%;
+        }
+
+        #gpxFileInput {
+            position: absolute;
+            top: 10px;
+            left: 60px;
+            z-index: 1000;
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
+<body>
+<input type="file" id="gpxFileInput" accept=".gpx"/>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+  const convertToJST = (utcTime) => new Date(utcTime).toLocaleString('ja-JP', {timeZone: 'Asia/Tokyo'});
+
+  const getPrecisionFromLatLon = (lat, lon) => {
+    const latDecimalPlaces = lat.split('.')[1]?.length || 0;
+    const lonDecimalPlaces = lon.split('.')[1]?.length || 0;
+    const decimalPlaces = Math.min(latDecimalPlaces, lonDecimalPlaces);
+
+    return decimalPlaces <= 3 ? 15 : ({
+      4: 10,
+      5: 1,
+      6: 0.1,
+      7: 0.01,
+      8: 0.001,
+    }[decimalPlaces] || 0.0001);
+  };
+
+  const parseGPXFile = async (file) => {
+    const text = await file.text();
+    const parser = new DOMParser();
+    const gpx = parser.parseFromString(text, 'application/xml');
+    const trackpoints = gpx.getElementsByTagName('trkpt');
+
+    return Array.from(trackpoints).map(trkpt => {
+      const lat = trkpt.getAttribute('lat');
+      const lon = trkpt.getAttribute('lon');
+      const time = trkpt.querySelector('time')?.textContent || "N/A";
+
+      return {
+        latLng: [parseFloat(lat), parseFloat(lon)],
+        accuracy: getPrecisionFromLatLon(lat, lon) * 5,
+        time: time !== "時間なし" ? convertToJST(time) : "N/A"
+      };
+    });
+  };
+
+  const initializeMap = () => {
+    const map = L.map('map').setView([35.681236, 139.767125], 13); // Tokyo St.
+    L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png', {
+      attribution: '© 国土地理院',
+      maxZoom: 18,
+      minZoom: 6,
+    }).addTo(map);
+
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 100); // Delay for sizing
+
+    return map;
+  };
+
+  const addTrackToMap = (map, trackData) => {
+    const polyline = L.polyline(trackData.map(track => track.latLng), {color: 'red'}).addTo(map);
+    map.fitBounds(polyline.getBounds()); // Adjust to see whole track
+
+    trackData.forEach(({latLng, accuracy, time}) => {
+      const circle = L.circle(latLng, {
+        color: 'blue',
+        fillColor: '#00f',
+        fillOpacity: 0.2,
+        radius: accuracy,
+      }).addTo(map);
+
+      circle.bindPopup(`Latitude: ${latLng[0]}<br>Longitude: ${latLng[1]}<br>Time (JST): ${time}`);
+    });
+  };
+
+  let map;
+  window.onload = () => {
+    map = initializeMap();
+  };
+
+  document.getElementById('gpxFileInput').addEventListener('change', async (event) => {
+    const file = event.target.files[0];
+    if (file) {
+      const trackData = await parseGPXFile(file);
+      addTrackToMap(map, trackData);
+    }
+  });
+</script>
+</body>
+</html>
